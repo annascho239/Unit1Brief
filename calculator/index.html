@@ -94,6 +94,9 @@
           <label>Weeks worked per year
             <input type="number" id="aipf-weeks-year" min="1" max="52" step="1" value="52" aria-label="Weeks worked per year">
           </label>
+          <label>Avg extra attempts per prompt
+            <input type="number" id="aipf-retry-rate" min="0" max="5" step="0.1" value="0" aria-label="Average extra attempts per prompt">
+          </label>
         </div>
         <p class="aipf-running" id="aipf-running" aria-live="polite"></p>
         <div class="aipf-writes">
@@ -523,13 +526,16 @@
     const DAYS = 365; // Real calendar days: converts the user's annual personal-lifestyle footprint to a daily figure.
 
     let uidSeq = 1;
-    const state = { rows: [], metric: 'carbon', loc: 'us', home: 'med', drive: 'davg', diet: 'avg', fly: 'some', aiDaysPerWeek: 7, aiWeeksPerYear: 52 };
+    const state = { rows: [], metric: 'carbon', loc: 'us', home: 'med', drive: 'davg', diet: 'avg', fly: 'some', aiDaysPerWeek: 7, aiWeeksPerYear: 52, retryRate: 0 };
     // AI use isn't necessarily every calendar day; annualize it on the user's own work schedule instead of DAYS.
     function aiDaysPerYear() {
       const dw = Math.max(1, Math.min(7, state.aiDaysPerWeek || 7));
       const wy = Math.max(1, Math.min(52, state.aiWeeksPerYear || 52));
       return dw * wy;
     }
+    // Extra attempts (regenerating a bad reply, retrying an error) inflate real usage above what's entered.
+    function retryMultiplier() { return 1 + Math.max(0, Math.min(5, state.retryRate || 0)); }
+    function effectiveCount(row) { return (row.count || 0) * retryMultiplier(); }
 
     let root = null;
     const getModel = (id) => MODELS.find((m) => m.id === id) || MODELS[0];
@@ -594,17 +600,19 @@
       return [s.ml / 1000, s.mlmin / 1000, s.mlmax / 1000];
     }
     function totalPrompts() { let n = 0; for (const r of state.rows) n += r.count || 0; return n; }
+    function totalPromptsEffective() { return totalPrompts() * retryMultiplier(); }
     function aiDailyTriple(metric) {
       let a = 0, b = 0, c = 0;
       for (const r of state.rows) {
         if (!r.count) continue;
         const t = perPromptTriple(getModel(r.model), r.size, metric);
-        a += r.count * t[0]; b += r.count * t[1]; c += r.count * t[2];
+        const n = effectiveCount(r);
+        a += n * t[0]; b += n * t[1]; c += n * t[2];
       }
       return [a, b, c];
     }
     const aiDaily = (metric) => aiDailyTriple(metric)[0];
-    function aiDailyEnergy() { let t = 0; for (const r of state.rows) if (r.count) t += r.count * getModel(r.model).sizes[r.size].wh; return t; }
+    function aiDailyEnergy() { let t = 0; for (const r of state.rows) if (r.count) t += effectiveCount(r) * getModel(r.model).sizes[r.size].wh; return t; }
     function dailyFootprint(metric) {
       const loc = getLoc();
       const home = HOMES.find((x) => x.id === state.home) || HOMES[1];
@@ -624,12 +632,12 @@
     function linesForSize(s) { return Math.round((s.w / TOKENS_PER_WORD) * CODE_FRACTION / TOKENS_PER_LINE); }
     function dailyWords() {
       let n = 0;
-      for (const r of state.rows) if (r.count && !isCodeRow(r)) n += r.count * (SIZES.find((s) => s.id === r.size) || { w: 0 }).w;
+      for (const r of state.rows) if (r.count && !isCodeRow(r)) n += effectiveCount(r) * (SIZES.find((s) => s.id === r.size) || { w: 0 }).w;
       return n;
     }
     function dailyCodeLines() {
       let n = 0;
-      for (const r of state.rows) if (r.count && isCodeRow(r)) { const s = SIZES.find((x) => x.id === r.size); if (s) n += r.count * linesForSize(s); }
+      for (const r of state.rows) if (r.count && isCodeRow(r)) { const s = SIZES.find((x) => x.id === r.size); if (s) n += effectiveCount(r) * linesForSize(s); }
       return n;
     }
     function fmtWords(n) { return n >= 1e6 ? fmtNum(n / 1e6) + ' million' : Math.round(n).toLocaleString('en-US'); }
@@ -656,7 +664,7 @@
       const r = state.rows.map((row) => MODELS.findIndex((m) => m.id === row.model) + '-' + SIZES.findIndex((s) => s.id === row.size) + '-' + (row.count || 0)).join('.');
       const p = new URLSearchParams();
       p.set('k', state.metric); p.set('l', state.loc); p.set('h', state.home); p.set('v', state.drive); p.set('d', state.diet); p.set('f', state.fly); p.set('r', r);
-      p.set('dw', state.aiDaysPerWeek); p.set('wy', state.aiWeeksPerYear);
+      p.set('dw', state.aiDaysPerWeek); p.set('wy', state.aiWeeksPerYear); p.set('rt', state.retryRate);
       return location.origin + location.pathname + '#' + p.toString();
     }
     function readURL() {
@@ -672,6 +680,7 @@
         const f = p.get('f'); if (f && FLYING.some((x) => x.id === f)) state.fly = f;
         const dw = parseInt(p.get('dw'), 10); if (dw >= 1 && dw <= 7) state.aiDaysPerWeek = dw;
         const wy = parseInt(p.get('wy'), 10); if (wy >= 1 && wy <= 52) state.aiWeeksPerYear = wy;
+        const rt = parseFloat(p.get('rt')); if (rt >= 0 && rt <= 5) state.retryRate = rt;
         const r = p.get('r');
         if (r) {
           const rows = [];
@@ -745,7 +754,7 @@
         const wrapEl = root.querySelector('.aipf-rowwrap[data-uid="' + row.uid + '"] .aipf-row-meta');
         if (!wrapEl) continue;
         const per = perPromptTriple(getModel(row.model), row.size, state.metric)[0];
-        const contr = (row.count || 0) * per;
+        const contr = effectiveCount(row) * per;
         const share = total > 0 ? (contr / total) * 100 : 0;
         const shareStr = share >= 10 ? Math.round(share) : share.toFixed(1);
         wrapEl.textContent = fmtMetric(per) + ' each, ' + fmtMetric(contr) + ' a day, ' + shareStr + '% of your AI ' + metricWord();
@@ -754,6 +763,7 @@
     function renderSchedule() {
       const dw = root.querySelector('#aipf-days-week'); if (dw) dw.value = String(state.aiDaysPerWeek);
       const wy = root.querySelector('#aipf-weeks-year'); if (wy) wy.value = String(state.aiWeeksPerYear);
+      const rt = root.querySelector('#aipf-retry-rate'); if (rt) rt.value = String(state.retryRate);
     }
     function renderLifeSelects() {
       function fill(id, list, cur) { const sel = root.querySelector(id); sel.innerHTML = ''; for (const x of list) sel.appendChild(option(x.id, x.label, x.id === cur)); }
@@ -770,8 +780,11 @@
       const n = totalPrompts();
       const cD = aiDaily('carbon'), wD = aiDaily('water'), eD = aiDailyEnergy();
       if (n <= 0) { box.innerHTML = 'Nothing entered yet.'; return; }
+      const promptsPhrase = state.retryRate > 0
+        ? '<b>' + n.toLocaleString('en-US') + '</b> initial prompts a day (<b>' + Math.round(totalPromptsEffective()).toLocaleString('en-US') + '</b> with retries)'
+        : '<b>' + n.toLocaleString('en-US') + '</b> prompts a day';
       box.innerHTML =
-        'That is <b>' + n.toLocaleString('en-US') + '</b> prompts a day, costing about <b>' + fmtCarbon(cD) +
+        'That is ' + promptsPhrase + ', costing about <b>' + fmtCarbon(cD) +
         '</b> and <b>' + fmtWater(wD) + '</b> (' + fmtEnergy(eD) + '). Over a year, <b>' + fmtCarbon(cD * aiDaysPerYear()) +
         '</b> and <b>' + fmtWater(wD * aiDaysPerYear()) + '</b>.';
     }
@@ -902,10 +915,11 @@
         const md = getModel(r.model);
         const ct = perPromptTriple(md, r.size, 'carbon');
         const wt = perPromptTriple(md, r.size, 'water');
-        const per = ct[0], d = r.count * per;
-        aiDay += d; aiMin += r.count * ct[1]; aiMax += r.count * ct[2]; eD += r.count * md.sizes[r.size].wh;
-        wDay += r.count * wt[0]; wMin += r.count * wt[1]; wMax += r.count * wt[2];
-        rowsHtml += '<tr><td>' + escXml(md.name) + '</td><td>' + escXml(sizeLabel(r.model, SIZES.find((x) => x.id === r.size))) + '</td><td class="n">' + r.count + '</td><td class="n">' + fmtCarbon(d) + '</td><td class="n">' + fmtWater(r.count * wt[0]) + '</td></tr>';
+        const n = effectiveCount(r);
+        const per = ct[0], d = n * per;
+        aiDay += d; aiMin += n * ct[1]; aiMax += n * ct[2]; eD += n * md.sizes[r.size].wh;
+        wDay += n * wt[0]; wMin += n * wt[1]; wMax += n * wt[2];
+        rowsHtml += '<tr><td>' + escXml(md.name) + '</td><td>' + escXml(sizeLabel(r.model, SIZES.find((x) => x.id === r.size))) + '</td><td class="n">' + r.count + '</td><td class="n">' + fmtCarbon(d) + '</td><td class="n">' + fmtWater(n * wt[0]) + '</td></tr>';
       }
       const aiYr = aiDay * aiDaysPerYear(), wYr = wDay * aiDaysPerYear();
       const day = dailyFootprint('carbon');
@@ -942,7 +956,9 @@
         '<h2>1. What I entered</h2>' +
         '<table><thead><tr><th>Model</th><th>Typical output</th><th class="n">Prompts/day</th><th class="n">CO₂e/day</th><th class="n">Water/day</th></tr></thead><tbody>' +
         (rowsHtml || '<tr><td colspan="5">No usage entered.</td></tr>') + '</tbody></table>' +
-        '<p class="muted">Per-prompt figures come from the EcoLogits model' + fn(1) + '; the electricity is costed on the ' + escXml(loc.label) + ' grid' + fn(2) + ', and EcoLogits’ embodied hardware emissions are kept.</p>' +
+        '<p class="muted">Per-prompt figures come from the EcoLogits model' + fn(1) + '; the electricity is costed on the ' + escXml(loc.label) + ' grid' + fn(2) + ', and EcoLogits’ embodied hardware emissions are kept.' +
+        (state.retryRate > 0 ? ' CO₂e/day and Water/day include an average of ' + state.retryRate + ' extra attempt' + (state.retryRate === 1 ? '' : 's') + ' per prompt (' + retryMultiplier().toFixed(2) + '× the prompts entered).' : '') +
+        '</p>' +
         '<h2>2. My AI carbon</h2>' +
         '<p>Across these prompts, my AI use comes to about <strong>' + fmtCarbon(aiDay) + ' per day</strong> (range ' + fmtCarbon(aiMin) + ' to ' + fmtCarbon(aiMax) + '), or <strong>' + fmtCarbon(aiYr) + ' per year</strong>, drawing about ' + fmtEnergy(eD) + ' of electricity a day.' + fn(1) + fn(2) + ' The range is EcoLogits’ 95% interval, mostly uncertainty in the parameter counts of closed models.' + fn(1) + '</p>' +
         '<h2>3. How that compares with the rest of my life</h2>' +
@@ -976,7 +992,7 @@
     function bindEvents() {
       root.querySelector('#aipf-addrow').addEventListener('click', () => { state.rows.push({ uid: uidSeq++, model: 'gpt-5.5', size: 'chat', count: 1 }); renderRows(); updateOutputs(); });
       root.querySelector('#aipf-reset').addEventListener('click', () => {
-        setDefaultRows(); state.aiDaysPerWeek = 7; state.aiWeeksPerYear = 52;
+        setDefaultRows(); state.aiDaysPerWeek = 7; state.aiWeeksPerYear = 52; state.retryRate = 0;
         renderRows(); renderSchedule(); updateOutputs();
       });
       root.querySelector('#aipf-days-week').addEventListener('change', (e) => {
@@ -986,6 +1002,10 @@
       root.querySelector('#aipf-weeks-year').addEventListener('change', (e) => {
         state.aiWeeksPerYear = Math.max(1, Math.min(52, parseInt(e.target.value, 10) || 52));
         e.target.value = String(state.aiWeeksPerYear); updateOutputs();
+      });
+      root.querySelector('#aipf-retry-rate').addEventListener('change', (e) => {
+        state.retryRate = Math.max(0, Math.min(5, parseFloat(e.target.value) || 0));
+        e.target.value = String(state.retryRate); updateOutputs();
       });
       root.querySelector('#aipf-share').addEventListener('click', (e) => {
         const btn = e.currentTarget;

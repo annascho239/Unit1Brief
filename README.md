@@ -32,6 +32,14 @@ The user's personal-lifestyle footprint (home, driving, diet, flying) is unaffec
 
 Both inputs persist to the URL (`dw`, `wy` params) alongside the existing shareable state, and reset to defaults with the "Reset" button.
 
+### Retry factor
+
+The original treats every entered "prompts/day" count as the real number of AI calls made. In practice, some prompts get retried — regenerating a bad reply, re-sending after an error — so real usage can run higher than what's typed in. A new global input, **"Avg extra attempts per prompt"** (0–5, default 0), sits alongside the work-schedule fields.
+
+A rate of `0.5`, for example, means every prompt gets an extra half-attempt on average, so a `retryMultiplier` of `1.5` is applied to each row's entered count before it feeds into every carbon/water/energy/word calculation (daily and annual totals, per-row shares, the comparison charts, and the cited report). The entered "prompts/day" figure itself is left alone; the running-total line instead shows both, e.g. "27 initial prompts a day (41 with retries)," so the effect stays visible. The personal-lifestyle footprint is untouched. Default (0) reproduces the baseline exactly.
+
+Persists to the URL (`rt` param) and resets to 0 with the "Reset" button.
+
 ## Running locally
 
 No build step or dependencies required — it's a static HTML file.
