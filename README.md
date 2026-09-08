@@ -40,6 +40,16 @@ A rate of `0.5`, for example, means every prompt gets an extra half-attempt on a
 
 Persists to the URL (`rt` param) and resets to 0 with the "Reset" button.
 
+### What-if comparison
+
+A new "What if you used AI less?" section sits below the existing annual add/cut charts. A slider, "Reduce your prompts by ___%" (0–100, step 5, default 50), computes the carbon and water you'd save at that cut, against the same annualized, retry-inflated totals used everywhere else on the page (so it stays consistent with the work-schedule and retry-factor inputs above it). Unlike those two inputs, this one doesn't feed back into any other number on the page — it's a self-contained exploration — so it defaults to 50% rather than a no-op 0%, to be informative on load.
+
+The result line always shows both carbon and water regardless of the Carbon/Water toggle, since the feature is specifically about both. At 0% it prompts you to move the slider; at 100% the "savings" equal your full current annual AI footprint.
+
+Persists to the URL (`wi` param) and resets to 50 with the "Reset" button.
+
+(Also fixed while building this: the page's fine-print note said AI carbon/water figures "exclude... retries," which stopped being true once the retry factor above was added. It now says retries are only counted if you set that input.)
+
 ## Running locally
 
 No build step or dependencies required — it's a static HTML file.

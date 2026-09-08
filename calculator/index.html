@@ -130,7 +130,7 @@
           <div class="aipf-bars aipf-bars--compact" id="aipf-daily-bars" aria-live="polite"></div>
         </div>
         <p class="aipf-fine" id="aipf-grid-note"></p>
-        <p class="aipf-fine">Excludes training, image and video generation, and retries.</p>
+        <p class="aipf-fine">Excludes training and image/video generation. Retries are only counted if you set "avg extra attempts per prompt" above.</p>
         <p class="aipf-fine">*A note on the Claude models: Anthropic has never said how Claude is built, so EcoLogits has to guess. Its guess is that Claude Opus and Sonnet only use a fraction of their parameters at a time. Some people who follow this closely think Claude actually uses all of them on every token, and if that's right, the Claude numbers here are too low. <a href="#methodology" onclick="document.getElementById('methodology').open=true">More in the methodology below</a>.</p>
       </div>
     </div>
@@ -145,6 +145,16 @@
       <h2 class="aipf-h2" id="aipf-cut-title">In a year, ways you can cut emissions</h2>
       <p class="aipf-sub" id="aipf-cut-sub"></p>
       <div class="aipf-bars" id="aipf-cut-bars" aria-live="polite"></div>
+    </div>
+
+    <div class="aipf-below" aria-label="What if you used AI less">
+      <h2 class="aipf-h2">What if you used AI less?</h2>
+      <p class="aipf-sub">Estimate the carbon and water you'd save with a smaller cut to your AI use, a year at a time.</p>
+      <div class="aipf-whatif-slider">
+        <label for="aipf-whatif-pct">Reduce your prompts by <b id="aipf-whatif-pctval">50</b>%</label>
+        <input type="range" id="aipf-whatif-pct" min="0" max="100" step="5" value="50" aria-label="Reduce your prompts by this percent">
+      </div>
+      <p class="aipf-sub" id="aipf-whatif-result" aria-live="polite"></p>
     </div>
 
     <details class="aipf-method" id="methodology">
@@ -526,7 +536,7 @@
     const DAYS = 365; // Real calendar days: converts the user's annual personal-lifestyle footprint to a daily figure.
 
     let uidSeq = 1;
-    const state = { rows: [], metric: 'carbon', loc: 'us', home: 'med', drive: 'davg', diet: 'avg', fly: 'some', aiDaysPerWeek: 7, aiWeeksPerYear: 52, retryRate: 0 };
+    const state = { rows: [], metric: 'carbon', loc: 'us', home: 'med', drive: 'davg', diet: 'avg', fly: 'some', aiDaysPerWeek: 7, aiWeeksPerYear: 52, retryRate: 0, whatIfPct: 50 };
     // AI use isn't necessarily every calendar day; annualize it on the user's own work schedule instead of DAYS.
     function aiDaysPerYear() {
       const dw = Math.max(1, Math.min(7, state.aiDaysPerWeek || 7));
@@ -664,7 +674,7 @@
       const r = state.rows.map((row) => MODELS.findIndex((m) => m.id === row.model) + '-' + SIZES.findIndex((s) => s.id === row.size) + '-' + (row.count || 0)).join('.');
       const p = new URLSearchParams();
       p.set('k', state.metric); p.set('l', state.loc); p.set('h', state.home); p.set('v', state.drive); p.set('d', state.diet); p.set('f', state.fly); p.set('r', r);
-      p.set('dw', state.aiDaysPerWeek); p.set('wy', state.aiWeeksPerYear); p.set('rt', state.retryRate);
+      p.set('dw', state.aiDaysPerWeek); p.set('wy', state.aiWeeksPerYear); p.set('rt', state.retryRate); p.set('wi', state.whatIfPct);
       return location.origin + location.pathname + '#' + p.toString();
     }
     function readURL() {
@@ -681,6 +691,7 @@
         const dw = parseInt(p.get('dw'), 10); if (dw >= 1 && dw <= 7) state.aiDaysPerWeek = dw;
         const wy = parseInt(p.get('wy'), 10); if (wy >= 1 && wy <= 52) state.aiWeeksPerYear = wy;
         const rt = parseFloat(p.get('rt')); if (rt >= 0 && rt <= 5) state.retryRate = rt;
+        const wi = parseInt(p.get('wi'), 10); if (wi >= 0 && wi <= 100) state.whatIfPct = wi;
         const r = p.get('r');
         if (r) {
           const rows = [];
@@ -885,8 +896,32 @@
       renderBars('#aipf-cut-bars', 'Cut your AI use', aiYr, cuts, unit);
     }
 
+    // ---- What-if: partial cut to AI use ----
+    function whatIfSavings() {
+      const pct = Math.max(0, Math.min(100, state.whatIfPct || 0)) / 100;
+      const carbonYr = aiDaily('carbon') * aiDaysPerYear();
+      const waterYr = aiDaily('water') * aiDaysPerYear();
+      return {
+        carbonYr, waterYr,
+        carbonSaved: carbonYr * pct, waterSaved: waterYr * pct,
+        carbonLeft: carbonYr * (1 - pct), waterLeft: waterYr * (1 - pct),
+      };
+    }
+    function renderWhatIf() {
+      const pctEl = root.querySelector('#aipf-whatif-pctval'); if (pctEl) pctEl.textContent = String(state.whatIfPct);
+      const slider = root.querySelector('#aipf-whatif-pct'); if (slider) slider.value = String(state.whatIfPct);
+      const box = root.querySelector('#aipf-whatif-result');
+      if (!box) return;
+      const s = whatIfSavings();
+      if (s.carbonYr <= 0) { box.innerHTML = 'Add some AI use above to see what a cut would save.'; return; }
+      if (state.whatIfPct <= 0) { box.innerHTML = 'Move the slider to see what cutting your AI use would save.'; return; }
+      box.innerHTML = 'At a ' + state.whatIfPct + '% cut, you would save an estimated <strong>' + fmtCarbon(s.carbonSaved) +
+        '</strong> and <strong>' + fmtWater(s.waterSaved) + '</strong> a year — down to <strong>' + fmtCarbon(s.carbonLeft) +
+        '</strong> and <strong>' + fmtWater(s.waterLeft) + '</strong> a year.';
+    }
+
     function updateOutputs() {
-      renderRunning(); updateRowMeta(); renderHeadline(); renderGridNote(); renderWords(); renderDaily(); renderAnnualSplit();
+      renderRunning(); updateRowMeta(); renderHeadline(); renderGridNote(); renderWords(); renderDaily(); renderAnnualSplit(); renderWhatIf();
     }
     // ---- Cited report ----
     function escXml(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
@@ -992,8 +1027,12 @@
     function bindEvents() {
       root.querySelector('#aipf-addrow').addEventListener('click', () => { state.rows.push({ uid: uidSeq++, model: 'gpt-5.5', size: 'chat', count: 1 }); renderRows(); updateOutputs(); });
       root.querySelector('#aipf-reset').addEventListener('click', () => {
-        setDefaultRows(); state.aiDaysPerWeek = 7; state.aiWeeksPerYear = 52; state.retryRate = 0;
+        setDefaultRows(); state.aiDaysPerWeek = 7; state.aiWeeksPerYear = 52; state.retryRate = 0; state.whatIfPct = 50;
         renderRows(); renderSchedule(); updateOutputs();
+      });
+      root.querySelector('#aipf-whatif-pct').addEventListener('input', (e) => {
+        state.whatIfPct = Math.max(0, Math.min(100, parseInt(e.target.value, 10) || 0));
+        renderWhatIf();
       });
       root.querySelector('#aipf-days-week').addEventListener('change', (e) => {
         state.aiDaysPerWeek = Math.max(1, Math.min(7, parseInt(e.target.value, 10) || 7));
@@ -1129,6 +1168,10 @@
     font-variant-numeric: tabular-nums;
   }
   .aipf-schedule input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+  .aipf-whatif-slider { display: flex; flex-direction: column; gap: 0.4rem; margin: 0 0 0.9rem; }
+  .aipf-whatif-slider label { font-family: var(--font-body); font-size: 0.85rem; color: var(--text-secondary); }
+  .aipf-whatif-slider input[type="range"] { width: 100%; accent-color: var(--accent); }
 
   .aipf-running { margin: 1rem 0 0; padding-top: 0.9rem; border-top: 1px solid var(--border); font-size: 1.05rem; line-height: 1.6; color: var(--text-secondary); }
   .aipf-tools { margin: 0.6rem 0 0; font-family: var(--font-body); font-size: 0.78rem; color: var(--dim); }
