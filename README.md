@@ -17,6 +17,21 @@ The downloaded source is an [Astro](https://astro.build) component built for and
 
 No calculation logic, HTML structure, or CSS rules were altered.
 
+## Features added beyond the original
+
+### Work schedule calculation
+
+The original always annualizes daily AI use with a flat `× 365`. In practice most people don't use AI on every calendar day — many only use it on workdays. The calculator now has two additional inputs in the "Your AI use" panel:
+
+- **AI-use days per week** (1–7, default 7)
+- **Weeks worked per year** (1–52, default 52)
+
+These multiply together into `AI_DAYS_PER_YEAR`, which replaces the flat 365 everywhere an *AI-use* figure is annualized: the "over a year" summary, the words/code-lines-per-year figures, the miles-equivalent line, the annual comparison-bar charts, and the cited report. Defaults (7 × 52 = 364) are a near-no-op, so existing baseline numbers only shift once you change the inputs.
+
+The user's personal-lifestyle footprint (home, driving, diet, flying) is unaffected — it still divides by the real 365 calendar days, since that isn't tied to a work schedule. This keeps the headline "% of your daily footprint" comparison anchored to an actual day.
+
+Both inputs persist to the URL (`dw`, `wy` params) alongside the existing shareable state, and reset to defaults with the "Reset" button.
+
 ## Running locally
 
 No build step or dependencies required — it's a static HTML file.

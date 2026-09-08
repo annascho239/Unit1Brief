@@ -87,6 +87,14 @@
         </div>
         <div class="aipf-rows" id="aipf-rows"></div>
         <button type="button" class="aipf-addrow" id="aipf-addrow">+ add another</button>
+        <div class="aipf-schedule">
+          <label>AI-use days per week
+            <input type="number" id="aipf-days-week" min="1" max="7" step="1" value="7" aria-label="AI-use days per week">
+          </label>
+          <label>Weeks worked per year
+            <input type="number" id="aipf-weeks-year" min="1" max="52" step="1" value="52" aria-label="Weeks worked per year">
+          </label>
+        </div>
         <p class="aipf-running" id="aipf-running" aria-live="polite"></p>
         <div class="aipf-writes">
           <p class="aipf-writes-h">What it writes</p>
@@ -512,10 +520,16 @@
     ];
 
     const GAL_TO_L = 3.785411784;
-    const DAYS = 365;
+    const DAYS = 365; // Real calendar days: converts the user's annual personal-lifestyle footprint to a daily figure.
 
     let uidSeq = 1;
-    const state = { rows: [], metric: 'carbon', loc: 'us', home: 'med', drive: 'davg', diet: 'avg', fly: 'some' };
+    const state = { rows: [], metric: 'carbon', loc: 'us', home: 'med', drive: 'davg', diet: 'avg', fly: 'some', aiDaysPerWeek: 7, aiWeeksPerYear: 52 };
+    // AI use isn't necessarily every calendar day; annualize it on the user's own work schedule instead of DAYS.
+    function aiDaysPerYear() {
+      const dw = Math.max(1, Math.min(7, state.aiDaysPerWeek || 7));
+      const wy = Math.max(1, Math.min(52, state.aiWeeksPerYear || 52));
+      return dw * wy;
+    }
 
     let root = null;
     const getModel = (id) => MODELS.find((m) => m.id === id) || MODELS[0];
@@ -642,6 +656,7 @@
       const r = state.rows.map((row) => MODELS.findIndex((m) => m.id === row.model) + '-' + SIZES.findIndex((s) => s.id === row.size) + '-' + (row.count || 0)).join('.');
       const p = new URLSearchParams();
       p.set('k', state.metric); p.set('l', state.loc); p.set('h', state.home); p.set('v', state.drive); p.set('d', state.diet); p.set('f', state.fly); p.set('r', r);
+      p.set('dw', state.aiDaysPerWeek); p.set('wy', state.aiWeeksPerYear);
       return location.origin + location.pathname + '#' + p.toString();
     }
     function readURL() {
@@ -655,6 +670,8 @@
         const vv = p.get('v'); if (vv && DRIVING.some((x) => x.id === vv)) state.drive = vv;
         const d = p.get('d'); if (d && DIETS.some((x) => x.id === d)) state.diet = d;
         const f = p.get('f'); if (f && FLYING.some((x) => x.id === f)) state.fly = f;
+        const dw = parseInt(p.get('dw'), 10); if (dw >= 1 && dw <= 7) state.aiDaysPerWeek = dw;
+        const wy = parseInt(p.get('wy'), 10); if (wy >= 1 && wy <= 52) state.aiWeeksPerYear = wy;
         const r = p.get('r');
         if (r) {
           const rows = [];
@@ -734,6 +751,10 @@
         wrapEl.textContent = fmtMetric(per) + ' each, ' + fmtMetric(contr) + ' a day, ' + shareStr + '% of your AI ' + metricWord();
       }
     }
+    function renderSchedule() {
+      const dw = root.querySelector('#aipf-days-week'); if (dw) dw.value = String(state.aiDaysPerWeek);
+      const wy = root.querySelector('#aipf-weeks-year'); if (wy) wy.value = String(state.aiWeeksPerYear);
+    }
     function renderLifeSelects() {
       function fill(id, list, cur) { const sel = root.querySelector(id); sel.innerHTML = ''; for (const x of list) sel.appendChild(option(x.id, x.label, x.id === cur)); }
       fill('#aipf-loc', LOCATIONS, state.loc);
@@ -751,8 +772,8 @@
       if (n <= 0) { box.innerHTML = 'Nothing entered yet.'; return; }
       box.innerHTML =
         'That is <b>' + n.toLocaleString('en-US') + '</b> prompts a day, costing about <b>' + fmtCarbon(cD) +
-        '</b> and <b>' + fmtWater(wD) + '</b> (' + fmtEnergy(eD) + '). Over a year, <b>' + fmtCarbon(cD * DAYS) +
-        '</b> and <b>' + fmtWater(wD * DAYS) + '</b>.';
+        '</b> and <b>' + fmtWater(wD) + '</b> (' + fmtEnergy(eD) + '). Over a year, <b>' + fmtCarbon(cD * aiDaysPerYear()) +
+        '</b> and <b>' + fmtWater(wD * aiDaysPerYear()) + '</b>.';
     }
 
     function renderHeadline() {
@@ -787,18 +808,18 @@
       if (wd <= 0 && cd <= 0) { box.innerHTML = 'Add some use to see how much your AI is writing.'; return; }
       let html = '';
       if (wd > 0) {
-        const wy = wd * DAYS;
+        const wy = wd * aiDaysPerYear();
         html += 'About <b>' + fmtWords(wd) + ' words a day</b>, roughly <b>' + fmtWords(wy) + ' a year</b>. At the average American reading pace of ' + WPM +
           ' words a minute, that is <b>' + fmtReadingTime(wd / WPM) + '</b> of reading a day, or <b>' + fmtReadingTime(wy / WPM) + '</b> nonstop across the year.';
       } else {
         html += 'Almost all of your use is code, not prose to read.';
       }
       if (cd > 0) {
-        const cy = cd * DAYS;
+        const cy = cd * aiDaysPerYear();
         html += '<span class="aipf-words-code">It also writes about <b>' + fmtWords(cd) + ' lines of code a day</b>, roughly <b>' + fmtWords(cy) + '</b> a year.</span>';
       }
-      const miles = Math.round(aiDaily('carbon') * DAYS / 400); // EPA ~400 g CO2 per vehicle-mile
-      html += '<span class="aipf-words-miles">If you use chatbots this much every day, your annual use emits as much as driving the average gas car <b>' + miles.toLocaleString('en-US') + '</b> mile' + (miles === 1 ? '' : 's') + ' once.</span>';
+      const miles = Math.round(aiDaily('carbon') * aiDaysPerYear() / 400); // EPA ~400 g CO2 per vehicle-mile
+      html += '<span class="aipf-words-miles">At this rate, your annual use emits as much as driving the average gas car <b>' + miles.toLocaleString('en-US') + '</b> mile' + (miles === 1 ? '' : 's') + ' once.</span>';
       box.innerHTML = html;
     }
 
@@ -836,7 +857,7 @@
       renderBars('#aipf-daily-bars', 'Your daily AI use', ai, items, unit);
     }
     function renderAnnualSplit() {
-      const aiYr = aiDaily(state.metric) * DAYS;
+      const aiYr = aiDaily(state.metric) * aiDaysPerYear();
       const strip = (it) => ({ label: it.label, c: it.c, w: it.w });
       const src = state.metric === 'water' ? ANNUAL_WATER_ITEMS : ANNUAL_ITEMS;
       const adds = src.filter((it) => it.dir === 'add').map(strip);
@@ -886,7 +907,7 @@
         wDay += r.count * wt[0]; wMin += r.count * wt[1]; wMax += r.count * wt[2];
         rowsHtml += '<tr><td>' + escXml(md.name) + '</td><td>' + escXml(sizeLabel(r.model, SIZES.find((x) => x.id === r.size))) + '</td><td class="n">' + r.count + '</td><td class="n">' + fmtCarbon(d) + '</td><td class="n">' + fmtWater(r.count * wt[0]) + '</td></tr>';
       }
-      const aiYr = aiDay * DAYS, wYr = wDay * DAYS;
+      const aiYr = aiDay * aiDaysPerYear(), wYr = wDay * aiDaysPerYear();
       const day = dailyFootprint('carbon');
       const pct = day > 0 ? (aiDay / day) * 100 : 0;
       const pctStr = pct >= 1 ? pct.toFixed(pct >= 10 ? 0 : 1) + '%' : pct >= 0.01 ? pct.toFixed(2) + '%' : pct > 0 ? 'under 0.01%' : '0%';
@@ -954,7 +975,18 @@
     }
     function bindEvents() {
       root.querySelector('#aipf-addrow').addEventListener('click', () => { state.rows.push({ uid: uidSeq++, model: 'gpt-5.5', size: 'chat', count: 1 }); renderRows(); updateOutputs(); });
-      root.querySelector('#aipf-reset').addEventListener('click', () => { setDefaultRows(); renderRows(); updateOutputs(); });
+      root.querySelector('#aipf-reset').addEventListener('click', () => {
+        setDefaultRows(); state.aiDaysPerWeek = 7; state.aiWeeksPerYear = 52;
+        renderRows(); renderSchedule(); updateOutputs();
+      });
+      root.querySelector('#aipf-days-week').addEventListener('change', (e) => {
+        state.aiDaysPerWeek = Math.max(1, Math.min(7, parseInt(e.target.value, 10) || 7));
+        e.target.value = String(state.aiDaysPerWeek); updateOutputs();
+      });
+      root.querySelector('#aipf-weeks-year').addEventListener('change', (e) => {
+        state.aiWeeksPerYear = Math.max(1, Math.min(52, parseInt(e.target.value, 10) || 52));
+        e.target.value = String(state.aiWeeksPerYear); updateOutputs();
+      });
       root.querySelector('#aipf-share').addEventListener('click', (e) => {
         const btn = e.currentTarget;
         const done = () => { btn.textContent = 'Link copied'; setTimeout(() => { btn.textContent = 'Copy a link to this estimate'; }, 1800); };
@@ -984,7 +1016,7 @@
       if (!root || root.dataset.ready === '1') return;
       root.dataset.ready = '1';
       setDefaultRows(); readURL();
-      renderRows(); renderLifeSelects(); renderMetricToggle(); bindEvents(); updateOutputs();
+      renderRows(); renderSchedule(); renderLifeSelects(); renderMetricToggle(); bindEvents(); updateOutputs();
     }
     document.addEventListener('astro:page-load', init);
     if (document.readyState !== 'loading') init();
@@ -1068,6 +1100,15 @@
     text-decoration: underline; text-underline-offset: 3px;
   }
   .aipf-addrow:hover { color: var(--accent-hover); }
+
+  .aipf-schedule { display: flex; flex-wrap: wrap; gap: 0.9rem 1.5rem; margin: 0.9rem 0 0; padding-top: 0.9rem; border-top: 1px solid var(--border); }
+  .aipf-schedule label { display: flex; flex-direction: column; gap: 0.3rem; font-family: var(--font-body); font-size: 0.78rem; color: var(--dim); }
+  .aipf-schedule input {
+    width: 4.5rem; border: 1px solid var(--border-strong); border-radius: 5px; background: var(--bg-subtle);
+    color: var(--text); font-family: var(--font-body); font-size: 0.88rem; padding: 0.3rem 0.4rem;
+    font-variant-numeric: tabular-nums;
+  }
+  .aipf-schedule input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
   .aipf-running { margin: 1rem 0 0; padding-top: 0.9rem; border-top: 1px solid var(--border); font-size: 1.05rem; line-height: 1.6; color: var(--text-secondary); }
   .aipf-tools { margin: 0.6rem 0 0; font-family: var(--font-body); font-size: 0.78rem; color: var(--dim); }
